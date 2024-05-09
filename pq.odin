@@ -1213,7 +1213,7 @@ foreign pq {
 	// Returns false if above is not true or if there is an error on the pipeline that first
 	// needs clearing.
 	@(link_name="PQexitPipelineMode")
-	exit_pipleline_mode :: proc(conn: Conn) -> b32 ---
+	exit_pipeline_mode :: proc(conn: Conn) -> b32 ---
 	
 	// Makes a sync point in the pipeline by sending a sync message and flushing.
 	// This serves as a delimiter of an implicit transaction and an error recovery point.
