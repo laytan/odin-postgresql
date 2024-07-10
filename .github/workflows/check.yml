@@ -1,0 +1,17 @@
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: 0 20 * * *
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checks
+        run: odin check . -no-entry-point -vet -strict-style -vet-tabs
