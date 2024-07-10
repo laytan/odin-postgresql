@@ -2,7 +2,9 @@ package pq
 
 import "core:c/libc"
 
-foreign import pq "system:pq"
+LIB :: #config(POSTGRES_LIB, "system:pq")
+
+foreign import pq { LIB }
 
 // An opaque handle to a connection. 
 Conn :: distinct rawptr
