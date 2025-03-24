@@ -2,7 +2,11 @@ package pq
 
 import "core:c/libc"
 
-LIB :: #config(POSTGRES_LIB, "system:pq")
+when ODIN_OS == .Windows {
+	LIB :: #config(POSTGRES_LIB, "system:libpq.lib")
+} else {
+	LIB :: #config(POSTGRES_LIB, "system:pq")
+}
 
 foreign import pq { LIB }
 
