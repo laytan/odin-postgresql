@@ -1,6 +1,6 @@
 package pq
 
-import "core:c/libc"
+import "core:c"
 
 when ODIN_OS == .Windows {
 	LIB :: #config(POSTGRES_LIB, "system:libpq.lib")
@@ -12,6 +12,9 @@ foreign import pq { LIB }
 
 // An opaque handle to a connection. 
 Conn :: distinct rawptr
+
+// An opaque handle to a cancel connection.
+Cancel_Conn :: distinct rawptr
 
 // An opaque handle to a result.
 //
@@ -72,7 +75,7 @@ Connection_Status :: enum i32 {
 	Auth_OK,
 	// Negotiating environment-driven parameter settings.
 	Set_Env,
-	// Negotiating SSL encryption.
+	// Performing SSL handshake.
 	SSL_Startup,
 	// Internal state; connect() needed.
 	Needed,
@@ -82,10 +85,12 @@ Connection_Status :: enum i32 {
 	Consume,
 	// Negotiating GSSAPI.
 	GSS_Startup,
-	// Checking target server properties.
+	// Internal state: checking target server properties.
 	Check_Target,
 	// Checking if server is in standby mode.
 	Check_Standby,
+	// Waiting for connection attempt to be started.
+	Allocated,
 }
 
 Ping :: enum i32 {
@@ -155,6 +160,8 @@ Exec_Status :: enum i32 {
 	// `get_result` must be called repeatedly, and each time it will return this status code until the end
 	// of the current pipeline, at which point it will return `Pipeline_Sync` and normal processing can resume.
 	Pipeline_Aborted,
+	// Chunk of tuples from larger resultset.
+	Tuples_Chunk,
 }
 
 Field_Code :: enum i32 {
@@ -166,7 +173,7 @@ Field_Code :: enum i32 {
 	Severity_Non_Localized = 'V',
 	// The code identifies the type of error that has occurred; it can be used by front-end applications
 	// to perform specific operations (such as error handling) in response to a particular database error.
-	// For a list of possible codes, see [[Appendix A; https://www.postgresql.org/docs/16/errcodes-appendix.html]].
+	// For a list of possible codes, see [[Appendix A; https://www.postgresql.org/docs/17/errcodes-appendix.html ]].
 	// This field is not localizable, and is always present.
 	SQL_State = 'C',
 	// The primary human-readable error message (typically one line). Always present.
@@ -356,6 +363,8 @@ Notify :: struct {
 	_next:   ^Notify,
 }
 
+Usec_Time :: distinct i64
+
 Event_ID :: enum i32 {
 	// The register event occurs when `register_event_proc` is called. It is the ideal time to
 	// initialize any `instance_data` an event procedure may need. Only one register event will
@@ -420,7 +429,7 @@ Event_Result_Destroy :: struct {
 
 @(link_prefix="PQ")
 foreign pq {
-/*----- [[Database Connection Control Functions; https://www.postgresql.org/docs/16/libpq-connect.html]] -----*/
+/*----- [[Database Connection Control Functions; https://www.postgresql.org/docs/17/libpq-connect.html ]] -----*/
 
 	// Makes a new connection to the database server.
 	// 
@@ -433,7 +442,7 @@ foreign pq {
 	// The passed arrays can be empty to use all default parameters, or can contain one or more parameter settings. They should be matched in length.
 	// Processing will stop with the last non-nil element of the `keywords` array.
 	//
-	// [[More info; https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-PQCONNECTDBPARAMS]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQCONNECTDBPARAMS ]]
 	@(link_name="PQconnectdbParams")
 	connectdb_params :: proc(keywords: [^]cstring, values: [^]cstring, expand_dbname: b32) -> Conn ---
 
@@ -468,19 +477,19 @@ foreign pq {
 	
 	// Makes a connection to the database server in a nonblocking manner.
 	//
-	// [[More info; https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-PQCONNECTSTARTPARAMS]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQCONNECTSTARTPARAMS ]]
 	@(link_name="PQconnectStartParams")
 	connect_start_params :: proc(keywords: [^]cstring, values: [^]cstring, expand_dbname: b32) -> Conn ---
 
 	// Makes a connection to the database server in a nonblocking manner.
 	//
-	// [[More info; https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-PQCONNECTSTARTPARAMS]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQCONNECTSTARTPARAMS ]]
 	@(link_name="PQconnectStart")
 	connect_start :: proc(conninfo: cstring) -> Conn ---
 
 	// Poll the connection status after one of the 2 functions above succeeds.
 	//
-	// [[More info; https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-PQCONNECTSTARTPARAMS]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQCONNECTSTARTPARAMS ]]
 	@(link_name="PQconnectPoll")
 	connect_poll :: proc(conn: Conn) -> Polling_Status ---
 
@@ -489,7 +498,7 @@ foreign pq {
 	// NOTE: After processing the options array, free it by passing it to `conninfoFree`. If that is not done,
 	// a small amount of memory is leaked for each call to `conndefaults`.
 	//
-	// [[More info; https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-PQCONNDEFAULTS]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQCONNDEFAULTS ]]
 	@(link_name="PQconndefaults")
 	conn_defaults  :: proc() -> [^]Conninfo_Option ---
 
@@ -504,7 +513,7 @@ foreign pq {
 	// some memory is leaked for each callto `conninfoParse`. Conversely, if an error occurs and `errmsg` is not nil,
 	// be sure to free the error string using `freemem`.
 	//
-	// [[More info; https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-PQCONNINFOPARSE]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQCONNINFOPARSE ]]
 	@(link_name="PQconninfoParse")
 	conninfo_parse :: proc(conninfo: cstring, errmsg: ^cstring = nil) -> [^]Conninfo_Option ---
 	
@@ -523,7 +532,7 @@ foreign pq {
 	
 	// Resets the communication channel to the server, in a nonblocking manner.
 	//
-	// [[More info; https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-PQRESETSTART]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQRESETSTART ]]
 	@(link_name="PQresetStart")
 	reset_start :: proc(conn: Conn) -> b32 ---
 
@@ -541,16 +550,16 @@ foreign pq {
 	@(link_name="PQping")
 	ping :: proc(conninfo: cstring) -> Ping ---
 	
-	// [[More info; https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-PQSETSSLKEYPASSHOOK-OPENSSL]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQSETSSLKEYPASSHOOK-OPENSSL ]]
 	@(link_name="PQsetSSLKeyPassHook_OpenSSL")
 	set_ssl_key_pass_hook :: proc(hook: SSL_Key_Pass_Hook) ---
 	
-	// [[More info; https://www.postgresql.org/docs/16/libpq-connect.html#LIBPQ-PQGETSSLKEYPASSHOOK-OPENSSL]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQGETSSLKEYPASSHOOK-OPENSSL ]]
 	@(link_name="PQgetSSLKeyPassHook_OpenSSL")
 	ssl_key_pass_hook :: proc() -> SSL_Key_Pass_Hook ---
 
 
-/*----- [[Connection State Functions; https://www.postgresql.org/docs/16/libpq-status.html]] -----*/
+/*----- [[Connection State Functions; https://www.postgresql.org/docs/17/libpq-status.html ]] -----*/
 
 	// Returns the database name of the connection.
 	db       :: proc(conn: Conn) -> cstring ---
@@ -571,7 +580,7 @@ foreign pq {
 
 	// Returns the status of the connection.
 	//
-	// [[More Info; https://www.postgresql.org/docs/16/libpq-status.html#LIBPQ-PQSTATUS]]
+	// [[More Info; https://www.postgresql.org/docs/17/libpq-status.html#LIBPQ-PQSTATUS ]]
 	status  :: proc(conn: Conn) -> Connection_Status ---
 	
 	// Returns the current in-transaction status of the server.
@@ -582,19 +591,19 @@ foreign pq {
 	
 	// Looks up a current parameter setting of the server.
 	//
-	// [[More Info; https://www.postgresql.org/docs/16/libpq-status.html#LIBPQ-PQPARAMETERSTATUS]]
+	// [[More Info; https://www.postgresql.org/docs/17/libpq-status.html#LIBPQ-PQPARAMETERSTATUS ]]
 	@(link_name="PQparamterStatus")
 	parameter_status :: proc(conn: Conn, param: cstring) -> cstring ---
 	
 	// Interrogates the frontend/backend protocol being used.
 	//
-	// [[More Info; https://www.postgresql.org/docs/16/libpq-status.html#LIBPQ-PQPROTOCOLVERSION]]
+	// [[More Info; https://www.postgresql.org/docs/17/libpq-status.html#LIBPQ-PQPROTOCOLVERSION ]]
 	@(link_name="PQprotocolVersion")
 	protocol_version :: proc(conn: Conn) -> i32 ---
 
 	// Returns an integer representing the backend version.
 	//
-	// [[More Info; https://www.postgresql.org/docs/16/libpq-status.html#LIBPQ-SERVERVERSION]]
+	// [[More Info; https://www.postgresql.org/docs/17/libpq-status.html#LIBPQ-PQSERVERVERSION ]]
 	@(link_name="PQserverVersion")
 	server_version :: proc(conn: Conn) -> i32 ---
 	
@@ -636,7 +645,7 @@ foreign pq {
 	
 	// Returns SSL-related information about the connection.
 	//
-	// [[The list of available attributes; https://www.postgresql.org/docs/16/libpq-status.html#LIBPQ-PQSSLATTRIBUTE]]
+	// [[The list of available attributes; https://www.postgresql.org/docs/17/libpq-status.html#LIBPQ-PQSSLATTRIBUTE ]]
 	@(link_name="PQsslAttribute")
 	ssl_attribute :: proc(conn: Conn, attribute_name: cstring) -> cstring ---
 	
@@ -652,7 +661,7 @@ foreign pq {
 	ssl_struct :: proc(conn: Conn, name: cstring) -> rawptr ---
 
 
-/*----- [[Command Execution Functions; https://www.postgresql.org/docs/16/libpq-exec.html]] -----*/
+/*----- [[Command Execution Functions; https://www.postgresql.org/docs/17/libpq-exec.html ]] -----*/
 	
 	// Submits a command to the server and waits for the result.
 	//
@@ -821,7 +830,7 @@ foreign pq {
 	//
 	// NOTE: The caller must free the returned string.
 	//
-	// [[More info; https://www.postgresql.org/docs/16/libpq-exec.html#LIBPQ-PQRESULTVERBOSEERRORMESSAGE]]
+	// [[More info; https://www.postgresql.org/docs/17/libpq-exec.html#LIBPQ-PQRESULTVERBOSEERRORMESSAGE ]]
 	@(link_name="PQresultVerboseErrorMessage")
 	result_verbose_error_message :: proc(res: Result) -> cstring ---
 	
@@ -840,7 +849,7 @@ foreign pq {
 	clear :: proc(res: Result) ---
 
 
-/*----- [[Retrieving Query Result Information; https://www.postgresql.org/docs/16/libpq-exec.html#LIBPQ-EXEC-SELECT-INFO]] -----*/
+/*----- [[Retrieving Query Result Information; https://www.postgresql.org/docs/17/libpq-exec.html#LIBPQ-EXEC-SELECT-INFO ]] -----*/
 	
 	// Returns the number of rows (tuples) in the query result.
 	// Because it returns an integer result, large result sets might overflow the return value.
@@ -948,10 +957,10 @@ foreign pq {
 	// Prints out all the rows and, optionally, the column names to the specified output stream.
 	//
 	// NOTE: All data is assumed to be in text format.
-	print :: proc(fout: ^libc.FILE, res: Result, po: ^Print_Opt) ---
+	print :: proc(fout: ^c.FILE, res: Result, po: ^Print_Opt) ---
 
 
-/*----- [[Retrieving Other Result Information; https://www.postgresql.org/docs/16/libpq-exec.html#LIBPQ-EXEC-NONSELECT]] -----*/
+/*----- [[Retrieving Other Result Information; https://www.postgresql.org/docs/17/libpq-exec.html#LIBPQ-EXEC-NONSELECT ]] -----*/
 	
 	// Returns the command status tag from the SQL command that generated the `Result`.
 	//
@@ -978,7 +987,7 @@ foreign pq {
 	oid_value :: proc(res: Result) -> OID ---
 
 
-/*----- [[Escaping Strings for Inclusion in SQL Commands; https://www.postgresql.org/docs/16/libpq-exec.html#LIBPQ-EXEC-ESCAPE-STRING]] -----*/
+/*----- [[Escaping Strings for Inclusion in SQL Commands; https://www.postgresql.org/docs/17/libpq-exec.html#LIBPQ-EXEC-ESCAPE-STRING ]] -----*/
 	
 	// Escapes a string for use within an SQL command. This is useful when inserting data values as literal constants in SQL commands.
 	// Certain characters (such as qoutes or backslashes) must be escaped to prevent them from being interpreted specially by the SQL parser.
@@ -1053,7 +1062,7 @@ foreign pq {
 	unescape_bytea :: proc(from: cstring, to_length: ^uint) -> [^]byte ---
 
 
-/*----- [[Asynchronous Command Processing; https://www.postgresql.org/docs/16/libpq-async.html]] -----*/
+/*----- [[Asynchronous Command Processing; https://www.postgresql.org/docs/17/libpq-async.html ]] -----*/
 
 	// A typical application using these function will have a main loop that uses `select` or `poll` to wait for all
 	// the conditions that it must respond to. One of the conditions will be input available from the server, which
@@ -1140,6 +1149,28 @@ foreign pq {
 	// After a successful call, call `get_result` one or more times to determine whether the server successfully created the prepared statement.
 	@(link_name="PQsendDescribePortal")
 	send_describe_portal :: proc(conn: Conn, portal_name: cstring) -> b32 ---
+
+	@(link_name="PQclosePrepared")
+	close_prepared :: proc(conn: Conn, stmt: cstring) -> Result ---
+
+	@(link_name="PQclosePortal")
+	close_portal :: proc(conn: Conn, portal: cstring) -> Result ---
+
+	// Submits a request to close the specified prepared statement, without waiting for completion.
+	//
+	// This is an asynchronous version of `close_prepared`: it return `true` if it was able to dispatch
+	// the request, and `false` if not. After a successful call, call `get_result` to obtain the results.
+	// The function's parameters are handled identically to `close_prepared`.
+	@(link_name="PQsendClosePrepared")
+	send_close_prepared :: proc(conn: Conn, stmt: cstring) -> b32 ---
+
+	// Submits a request to close specified portal, without waiting for completion.
+	//
+	// This is an asynchronous version of `close_portal`: it returns `true` if it was able to dispatch
+	// the request, and `false` if not. After a successful call, call `get_result` to obtain the results.
+	// The function's parameters are handled identically to `close_portal`.
+	@(link_name="PQsendClosePortal")
+	send_close_portal :: proc(conn: Conn, portal: cstring) -> b32 ---
 	
 	// Waits for the next result from a prior asynchronous call and returns it.
 	// A nil pointer is returned when the command is complete and there will be no more results.
@@ -1202,7 +1233,7 @@ foreign pq {
 	flush :: proc(conn: Conn) -> Flush_Result ---
 
 
-/*----- [[Pipeline Mode; https://www.postgresql.org/docs/16/libpq-pipeline-mode.html]] -----*/
+/*----- [[Pipeline Mode; https://www.postgresql.org/docs/17/libpq-pipeline-mode.html ]] -----*/
 	
 	// Returns the current pipeline mode status of the connection.
 	@(link_name="PQpipelineStatus")
@@ -1236,14 +1267,23 @@ foreign pq {
 	@(link_name="PQsendFlushRequest")
 	send_flush_request :: proc(conn: Conn) -> b32 ---
 
+	// Marks a synchronization point in a pipeline by sending a sync message without flushing the send buffer.
+	// This serves as the delimiter of an implicit transaction and an error recovery point.
+	//
+	// Returns `true` for success. Returns `false` if the connection is not in pipeline mode or
+	// sending a sync message failed. Note that the message is not itself flushed to the server automatically;
+	// use `flush` if necessary.
+	@(link_name="PQsendPipelineSync")
+	send_pipeline_sync :: proc(conn: Conn) -> b32 ---
 
-/*----- [[Retrieving Query Results Row-by-Row; https://www.postgresql.org/docs/16/libpq-single-row-mode.html]] -----*/
+
+/*----- [[Retrieving Query Results Row-by-Row; https://www.postgresql.org/docs/17/libpq-single-row-mode.html ]] -----*/
 
 	// Ordinarily, libpq collects an SQL command's entire result and returns it to the application as a
 	// single result. This can be unworkable for commands that return a large number of rows.
-	// For such cases, applications can use `send_query` and `get_result` in single-row mode.
-	// In this mode, the result row(s) are returned to the application one at a time,
-	// as they are received from the server.
+	// For such cases, applications can use `send_query` and `get_result` in single-row mode or chunked mode.
+	// In these modes, result row(s) are returned to the application as they are received from the server,
+	// one at a time for single-row mode or in groups for chunked mode.
 	
 	// Select single-row mode for the currently executing query.
 	//
@@ -1255,35 +1295,86 @@ foreign pq {
 	@(link_name="PQsetSingleRowMode")
 	set_single_row_mode :: proc(conn: Conn) -> b32 ---
 
+	// Select chunked mode for the currently-executing query.
+	//
+	// This function is similar to `set_single_row_mode`, except that it specifies retrieval of up to
+	// `chunk_size` rows per `Result, not necessarily just one row. This function can only be called
+	// immediately after `send_query` or one of its sibling functions, before any other operation on the
+	// connection such as `consume_input` or `get_result`. If called at the correct time, the function
+	// activates chunked mode for the current query and returns `true`. Otherwise the mode stays unchanged
+	// and the function returns `false`. In any case, the mode reverts to normal after completion of the
+	// current query.
+	@(link_name="PQsetChunkedRowMode")
+	set_chunked_rows_mode :: proc(conn: Conn, chunk_size: i32) -> b32 ---
 
-/*----- [[Cancelling Queries in Progress; https://www.postgresql.org/docs/16/libpq-cancel.html]] -----*/
-	
+
+/*----- [[Cancelling Queries in Progress; https://www.postgresql.org/docs/17/libpq-cancel.html ]] -----*/
+
+	// Creates a Cancel_Conn that's used to cancel a query on the given Conn.
+	@(link_name="PGcancelConn")
+	cancel_create :: proc(conn: Conn) -> Cancel_Conn ---
+
+	// Requests that the server abandons processing of the current command in a non-blocking manner.
+	@(link_name="PQcancelStart")
+	cancel_start :: proc(cancel_conn: Cancel_Conn) -> b32 ---
+
+	// Issues a blocking cancel request.
+	@(link_name="PQcancelBlocking")
+	cancel_blocking :: proc(cancel_conn: Cancel_Conn) -> b32 ---
+
+	// Poll a non-blocking cancel request.
+	@(link_name="PQcancelPoll")
+	cancel_poll :: proc(cancel_conn: Cancel_Conn) -> Polling_Status ---
+
+	// Returns the status of the cancel connection.
+	@(link_name="PQcancelStatus")
+	cancel_status :: proc(cancel_conn: Cancel_Conn) -> Connection_Status ---
+
+	// Obtains the file descriptor number of the cancel connection socket to the server.
+	@(link_name="PQcancelSocket")
+	cancel_socket :: proc(cancel_conn: Cancel_Conn) -> i32 ---
+
+	// Returns the error message most recently generated by an operation on the cancel connection.
+	@(link_name="PQcancelErrorMessage")
+	cancel_error_message :: proc(cancel_conn: Cancel_Conn) -> cstring ---
+
+	// Resets the `Cancel_Conn` so it can be reused for a new cancel connection.
+	@(link_name="PQcancelReset")
+	cancel_reset :: proc(cancel_conn: Cancel_Conn) ---
+
+	// Closes the cancel connection (if it did not finish sending the cancel request yet). Also frees
+	// memory used by the `Cancel_Conn` object.
+	@(link_name="PQcancelFinish")
+	cancel_finish :: proc(cancel_conn: Cancel_Conn) ---
+
 	// Creates a data structure containing the information needed to cancel a command issued through
 	// a particular db connection.
 	//
 	// Caller must free with `free_cancel`.
 	@(link_name="PQgetCancel")
 	get_cancel :: proc(conn: Conn) -> Cancel ---
-	
+
 	// Frees the data structure created by `get_cancel`.
 	@(link_name="PQfreeCancel")
 	free_cancel :: proc(cancel: Cancel) ---
-	
+
 	// Requests that the server abandon processing of the current command.
 	//
 	// If false is returned `errbuf` is filled with an explanatory error message.
 	// `errbuf` must be a char array of size `errbuf_size`(the recommended size is 256 bytes).
+	//
+	// WARN: deprecated version of cancel_blocking, but one which is signal-safe.
 	cancel :: proc(cancel: Cancel, errbuf: [^]byte, errbuf_size: i32) -> b32 ---
 
 
-/*----- [[Asynchronous Notification; https://www.postgresql.org/docs/16/libpq-notify.html]] -----*/
+/*----- [[Asynchronous Notification; https://www.postgresql.org/docs/17/libpq-notify.html ]] -----*/
 	
 	// Returns the next notification from a list of unhandled notification messages received from
 	// the server.
 	notifies :: proc(conn: Conn) -> ^Notify ---
 
 
-/*----- [[Functions Associated with the `COPY` Command; https://www.postgresql.org/docs/16/libpq-copy.html]] -----*/
+/*----- [[Functions Associated with the `COPY` Command; https://www.postgresql.org/docs/17/libpq-copy.html ]] -----*/
 	
 	// Sends data to the server during `COPY_IN` state.
 	@(link_name="PQputCopyData")
@@ -1320,7 +1411,7 @@ foreign pq {
 	get_copy_data :: proc(conn: Conn, buffer: ^[^]byte, async: b32) -> Get_Copy_Result ---
 
 
-/*----- [[Control Functions; https://www.postgresql.org/docs/16/libpq-control.html]] -----*/
+/*----- [[Control Functions; https://www.postgresql.org/docs/17/libpq-control.html ]] -----*/
 	
 	// Returns the client encoding.
 	//
@@ -1377,7 +1468,7 @@ foreign pq {
 	untrace :: proc(conn: Conn) ---
 
 
-/*----- [[Miscellaneous Functions; https://www.postgresql.org/docs/16/libpq-misc.html]] -----*/
+/*----- [[Miscellaneous Functions; https://www.postgresql.org/docs/17/libpq-misc.html ]] -----*/
 	
 	// Frees memory allocated by libpq.
 	//
@@ -1415,6 +1506,10 @@ foreign pq {
 	// On error, returns NULL, and a suitable message is stored in the connection object.
 	@(link_name="PQencryptPasswordConn")
 	encrypt_password_conn :: proc(conn: Conn, passwd: cstring, user: cstring, algorithm: cstring) -> cstring ---
+
+	// Changes a PostgreSQL password.
+	@(link_name="PQchangePassword")
+	change_password :: proc(conn: Conn, user: cstring, passwd: cstring) -> Result ---
 	
 	// Constructs an empty `Result` object with the given status.
 	//
@@ -1481,8 +1576,23 @@ foreign pq {
 	@(link_name="PQlibVersion")
 	lib_version :: proc() -> i32 ---
 
+	// Poll a connection's underlying socket descriptor received with `socket`.
+	//
+	// The primary use of this function is iterating through the connection sequence described in
+	// the documentation of `connect_start`.
+	//
+	// [[ More info; https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-PQSOCKETPOLL ]]
+	@(link_name="PQsocketPoll")
+	socket_poll :: proc(socket: i32, for_read: b32, for_write: b32, end_time: Usec_Time) -> b32 ---
 
-/*----- [[Notice Processing; https://www.postgresql.org/docs/16/libpq-notice-processing.html]] -----*/
+	// Retrieves the current time, expressed as the number of microseconds since the Unix epoch (that is, time_t times 1 million).
+	//
+	// This is primarily useful for calculating timeout values to use with `socket_poll`.
+	@(link_name="PQgetCurrentTimeUSec")
+	get_current_time_usec :: proc() -> Usec_Time ---
+
+
+/*----- [[Notice Processing; https://www.postgresql.org/docs/17/libpq-notice-processing.html ]] -----*/
 
 	// Notice and warning messages generated by the server are not returned by the query execution functions,
 	// since they do not imply failure of the query. Instead they are passed to a notice handling function,
@@ -1511,7 +1621,7 @@ foreign pq {
 	set_notice_processor :: proc(conn: Conn, processor: Notice_Processor, user: rawptr) -> Notice_Processor ---
 
 
-/*----- [[Event System; https://www.postgresql.org/docs/16/libpq-events.html]] -----*/
+/*----- [[Event System; https://www.postgresql.org/docs/17/libpq-events.html ]] -----*/
 
 	// libpq's event system is designed to notify registered event handlers about interesting libpq events,
 	// such as the creation or destruction of `Conn` and `Result` objects.

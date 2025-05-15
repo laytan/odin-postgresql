@@ -1,3 +1,3 @@
 # Odin PostgreSQL
 
-Odin bindings for libpq version 16.
+Odin bindings for libpq version 17.
