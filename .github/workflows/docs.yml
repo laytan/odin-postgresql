@@ -28,7 +28,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Get commonmark
-        run: sudo apt-fast install libcmark-dev
+        run: sudo apt-get install libcmark-dev
       - name: Get and build Odin docs generator
         run: |
           cd /home/runner
@@ -41,8 +41,8 @@ jobs:
       - name: Generate documentation
         run: ./docs/generate.sh
       - uses: actions/configure-pages@v3
-      - uses: actions/upload-pages-artifact@v2
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: ./docs/build
-      - uses: actions/deploy-pages@v2
+      - uses: actions/deploy-pages@v4
         id: deployment
