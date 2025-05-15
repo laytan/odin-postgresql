@@ -1456,7 +1456,7 @@ foreign pq {
 	// Protocol strings are enclosed in double quotes, while strings used as data values are enclosed
 	// in single quotes. Non-printable chars are printed as hexadecimal escapes.
 	// Further message-type-specific detail can be found in Section 55.7.
-	trace :: proc(conn: Conn, stream: ^libc.FILE) ---
+	trace :: proc(conn: Conn, stream: ^c.FILE) ---
 	
 	// Controls the tracing behavior of the client/server communication.
 	//
