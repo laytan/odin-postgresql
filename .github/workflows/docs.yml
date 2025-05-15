@@ -27,6 +27,8 @@ jobs:
       - uses: laytan/setup-odin@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          release: false
+          branch: master
       - name: Get commonmark
         run: sudo apt-get install libcmark-dev
       - name: Get and build Odin docs generator
